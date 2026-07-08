@@ -152,6 +152,14 @@ select {
 .viewer-placeholder.has-sheet {
   display: block; text-align: left; padding: 16px;
 }
+.route-nav {
+  display: flex; justify-content: space-between; gap: 8px;
+  margin-bottom: 10px;
+}
+.route-nav button { margin-left: 0; }
+#route-nav-back { margin-right: auto; }
+#route-nav-next { margin-left: auto; }
+
 #sheet-frame-holder {
   overflow: auto;
   max-height: 75vh;
@@ -682,22 +690,108 @@ async function renderSheetSelect(buildingName) {
   field.appendChild(select);
   viewer.appendChild(field);
 
+  const nav = document.createElement('div');
+  nav.id = 'route-nav';
+  nav.className = 'route-nav';
+  nav.style.display = 'none';
+  const backBtn = document.createElement('button');
+  backBtn.id = 'route-nav-back';
+  backBtn.type = 'button';
+  backBtn.className = 'btn-secondary';
+  const nextBtn = document.createElement('button');
+  nextBtn.id = 'route-nav-next';
+  nextBtn.type = 'button';
+  nav.appendChild(backBtn);
+  nav.appendChild(nextBtn);
+  viewer.appendChild(nav);
+
   const frameHolder = document.createElement('div');
   frameHolder.id = 'sheet-frame-holder';
   viewer.appendChild(frameHolder);
 
   select.addEventListener('change', () => {
+    // Свободное переключение листа руками — сбрасывает контекст трассы:
+    // кнопки "Продолжить"/"Вернуться" относятся к конкретному кабелю и
+    // конкретному месту перехода между листами, при ручной смене листа
+    // они теряют смысл.
+    ACTIVE_ROUTE = null;
+    nav.style.display = 'none';
     if (!select.value) { frameHolder.innerHTML = ''; return; }
     showSheet(frameHolder, sheets[Number(select.value)]);
   });
 }
 
-// Показывает маршрут кабеля: находит первый лист, где у него есть участки,
-// переключает на него select и рисует поверх поставленной схемы линию+точки.
-// (Кабель может проходить через несколько листов — сейчас показываем только
-// первый по порядку; переключение между листами маршрута — см. TODO в
-// ПРОЕКТ_ЗАМЕТКИ.md.)
-async function showCableRoute(cableId) {
+// Список файлов листов, через которые проходит кабель, в порядке следования
+// по маршруту (без повторов подряд) — нужен для кнопок "Продолжить"/"Вернуться".
+function computeFileSequence(route) {
+  const files = [];
+  for (const seg of route.segments) {
+    if (files[files.length - 1] !== seg.file) files.push(seg.file);
+  }
+  return files;
+}
+
+// Текущее состояние навигации по маршруту кабеля через несколько листов:
+// { cableId, route, files, index }. null — если маршрут сейчас не показан
+// (например, пользователь вручную переключил лист через select).
+let ACTIVE_ROUTE = null;
+
+function fileDesignation(file) {
+  return (file.match(/-([A-Z]+\d+)\.dxf$/) || [])[1];
+}
+
+// Рисует конкретный "шаг" маршрута (один файл/лист из ACTIVE_ROUTE.files) и
+// настраивает кнопки "Продолжить"/"Вернуться" под соседние листы маршрута.
+async function renderRouteStep(fileIndex) {
+  const { route, files } = ACTIVE_ROUTE;
+  const file = files[fileIndex];
+  const designation = fileDesignation(file);
+  const sheetIndex = CURRENT_SHEETS.findIndex(s => sheetDesignation(s) === designation);
+  const errorTarget = () => document.getElementById('sheet-frame-holder') || document.getElementById('viewer');
+  if (sheetIndex === -1) {
+    errorTarget().textContent = `Не найден лист "${designation}" в папке этого здания`;
+    return;
+  }
+
+  ACTIVE_ROUTE.index = fileIndex;
+  const select = document.getElementById('sheet-select');
+  select.value = String(sheetIndex);
+  const frameHolder = document.getElementById('sheet-frame-holder');
+  const svgEl = await showSheet(frameHolder, CURRENT_SHEETS[sheetIndex]);
+  if (!svgEl) return;
+  const segmentsOnSheet = route.segments.filter(s => s.file === file);
+  drawRouteOverlay(svgEl, segmentsOnSheet, route.start_code, route.end_code);
+
+  const nav = document.getElementById('route-nav');
+  const backBtn = document.getElementById('route-nav-back');
+  const nextBtn = document.getElementById('route-nav-next');
+  const hasPrev = fileIndex > 0;
+  const hasNext = fileIndex < files.length - 1;
+  if (!hasPrev && !hasNext) {
+    nav.style.display = 'none';
+  } else {
+    nav.style.display = '';
+    backBtn.style.visibility = hasPrev ? 'visible' : 'hidden';
+    nextBtn.style.visibility = hasNext ? 'visible' : 'hidden';
+    if (hasPrev) {
+      const prevSheet = CURRENT_SHEETS.find(s => sheetDesignation(s) === fileDesignation(files[fileIndex - 1]));
+      backBtn.textContent = `← Вернуться (${prevSheet ? prevSheet.label : fileDesignation(files[fileIndex - 1])})`;
+      backBtn.onclick = () => renderRouteStep(fileIndex - 1);
+    }
+    if (hasNext) {
+      const nextSheet = CURRENT_SHEETS.find(s => sheetDesignation(s) === fileDesignation(files[fileIndex + 1]));
+      nextBtn.textContent = `Продолжить (${nextSheet ? nextSheet.label : fileDesignation(files[fileIndex + 1])}) →`;
+      nextBtn.onclick = () => renderRouteStep(fileIndex + 1);
+    }
+  }
+}
+
+// Показывает маршрут кабеля: находит лист, где начинается указанный сегмент
+// (segIdx, по умолчанию 0 — самое начало маршрута), переключает на него
+// select и рисует поверх поставленной схемы линию+точки. Если кабель проходит
+// через несколько листов — рядом появляются кнопки "Продолжить"/"Вернуться"
+// (см. renderRouteStep) для перехода по маршруту без потери подсветки.
+async function showCableRoute(cableId, segIdx = 0) {
   const viewer = document.getElementById("viewer");
   // Если список листов ещё не отрисован (нет .has-sheet) — можно перезаписать
   // viewer целиком, иначе (здание уже выбрано) сообщение об ошибке пишем в
@@ -717,21 +811,11 @@ async function showCableRoute(cableId) {
     return;
   }
 
-  const firstFile = route.segments[0].file;
-  const designation = (firstFile.match(/-([A-Z]+\d+)\.dxf$/) || [])[1];
-  const sheetIndex = CURRENT_SHEETS.findIndex(s => sheetDesignation(s) === designation);
-  if (sheetIndex === -1) {
-    errorTarget().textContent = `Не найден лист "${designation}" в папке этого здания`;
-    return;
-  }
-
-  const select = document.getElementById('sheet-select');
-  select.value = String(sheetIndex);
-  const frameHolder = document.getElementById('sheet-frame-holder');
-  const svgEl = await showSheet(frameHolder, CURRENT_SHEETS[sheetIndex]);
-  if (!svgEl) return;
-  const segmentsOnSheet = route.segments.filter(s => s.file === firstFile);
-  drawRouteOverlay(svgEl, segmentsOnSheet, route.start_code, route.end_code);
+  const files = computeFileSequence(route);
+  const startFile = route.segments[Math.min(segIdx, route.segments.length - 1)].file;
+  const startIndex = Math.max(0, files.indexOf(startFile));
+  ACTIVE_ROUTE = { cableId, route, files, index: startIndex };
+  await renderRouteStep(startIndex);
 }
 
 document.getElementById("building-select").addEventListener("change", (e) => {
@@ -762,14 +846,21 @@ function parseTraceSequence(text) {
 }
 
 // Ищем в реестре маршрутов кабель, чья цепочка узлов (from → to → to → ...)
-// совпадает с введённой последовательностью — так работает поиск по
-// трассировке, вставленной прямо из столбца "Трассировка" Excel-задания.
-function findCableIdByTraceSequence(codes) {
+// содержит введённую последовательность КАК ФРАГМЕНТ (не обязательно с самого
+// начала маршрута) — пользователь может вставить не весь список трассировки
+// из Excel, а кусок посередине (например, без первой точки). Возвращаем не
+// только id кабеля, но и индекс сегмента, с которого начинается совпадение —
+// чтобы сразу открыть нужный лист, а не первый лист всего маршрута.
+function findRouteMatchByTraceSequence(codes) {
   if (!CURRENT_ROUTES || codes.length < 2) return null;
   for (const [id, route] of Object.entries(CURRENT_ROUTES)) {
     const chain = [route.segments[0].from, ...route.segments.map(s => s.to)];
-    if (chain.length === codes.length && chain.every((c, i) => c === codes[i])) {
-      return id;
+    for (let start = 0; start + codes.length <= chain.length; start++) {
+      let ok = true;
+      for (let i = 0; i < codes.length; i++) {
+        if (chain[start + i] !== codes[i]) { ok = false; break; }
+      }
+      if (ok) return { cableId: id, segIdx: Math.min(start, route.segments.length - 1) };
     }
   }
   return null;
@@ -797,12 +888,12 @@ document.getElementById("btn-show-route").addEventListener("click", () => {
       errorTarget().textContent = "Не удалось распознать последовательность узлов трассировки";
       return;
     }
-    const cableId = findCableIdByTraceSequence(codes);
-    if (!cableId) {
+    const match = findRouteMatchByTraceSequence(codes);
+    if (!match) {
       errorTarget().textContent = "Трасса с такой последовательностью узлов не найдена в реестре маршрутов";
       return;
     }
-    showCableRoute(cableId);
+    showCableRoute(match.cableId, match.segIdx);
     return;
   }
 
@@ -816,6 +907,9 @@ document.getElementById("btn-clear-route").addEventListener("click", () => {
   document.getElementById("cable-id-input").value = "";
   const overlay = document.querySelector('#sheet-frame-holder svg #route-overlay');
   if (overlay) overlay.remove();
+  ACTIVE_ROUTE = null;
+  const nav = document.getElementById('route-nav');
+  if (nav) nav.style.display = 'none';
 });
 
 // ─── Полноэкранный просмотр схемы (Блок 3) ───────────────────────────────
