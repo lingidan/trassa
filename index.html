@@ -439,6 +439,7 @@ function drawRouteOverlay(svgEl, segments, startCode, endCode) {
   const lineWidth = unit * 0.45;
   const haloWidth = lineWidth * 2.6;
 
+  const labelsLayer = document.createElementNS(ns, 'g');
   const linesLayer = document.createElementNS(ns, 'g');
   const pointsLayer = document.createElementNS(ns, 'g');
 
@@ -459,7 +460,11 @@ function drawRouteOverlay(svgEl, segments, startCode, endCode) {
 
     const line = document.createElementNS(ns, 'polyline');
     line.setAttribute('points', pointsAttr);
-    line.setAttribute('stroke', '#ff2b1f');
+    // Раньше было #ff2b1f (красный) — совпадает по цвету с настоящим лотком
+    // TRASSA1 на схеме (см. ПРОЕКТ_ЗАМЕТКИ.md), из-за чего нашу подсветку
+    // маршрута было легко спутать с реальным лотком. Малиновый ни с чем на
+    // схеме (чёрный/белый/жёлтый/красный/синий) не совпадает.
+    line.setAttribute('stroke', '#ff17b0');
     line.setAttribute('stroke-width', lineWidth);
     line.setAttribute('stroke-linecap', 'round');
     line.setAttribute('stroke-linejoin', 'round');
@@ -494,6 +499,40 @@ function drawRouteOverlay(svgEl, segments, startCode, endCode) {
       if (!drawnPoints.has(key)) drawnPoints.set(key, { x, y, codes: new Set() });
       drawnPoints.get(key).codes.add(code);
     }
+  }
+
+  // Подсветка ПОДПИСЕЙ узлов, которые встречаются в маршруте — пользователь
+  // просил выделять не только линию/точку, но и саму жёлтую надпись рядом с
+  // лотком, чтобы её было видно на фоне остальных сотен подписей на схеме.
+  //
+  // Точных размеров и поворота текста мы не знаем на клиенте: подписи в DXF
+  // рисуются ezdxf через text_policy=OUTLINE (см. render_full_sheet.py) —
+  // то есть попадают в SVG как залитые контуры (<path>), а не как <text> с
+  // читаемым содержимым, и повёрнуты вдоль лотка на произвольный угол (в
+  // исходном DXF встречаются повороты от 0° до 90°). Поэтому вместо точного
+  // прямоугольника вокруг текста рисуем овал без поворота, с запасом по
+  // размеру (ширина растёт с длиной кода) — он гарантированно накрывает
+  // подпись независимо от её угла поворота, читаемость текста не теряется
+  // благодаря низкой непрозрачности заливки и контуру поверх.
+  const highlightWidthLimit = unit * 32;
+  for (const { x, y, codes } of drawnPoints.values()) {
+    const label = [...codes].join(' / ');
+    const rx = Math.min(highlightWidthLimit, unit * (0.95 * label.length + 1.6));
+    const ry = unit * 2.6;
+    const ellipse = document.createElementNS(ns, 'ellipse');
+    ellipse.setAttribute('cx', x + rx * 0.25);
+    ellipse.setAttribute('cy', y - ry * 0.15);
+    ellipse.setAttribute('rx', rx);
+    ellipse.setAttribute('ry', ry);
+    ellipse.setAttribute('fill', '#39ff6a');
+    ellipse.setAttribute('fill-opacity', '0.22');
+    ellipse.setAttribute('stroke', '#39ff6a');
+    ellipse.setAttribute('stroke-opacity', '0.85');
+    ellipse.setAttribute('stroke-width', unit * 0.25);
+    const title = document.createElementNS(ns, 'title');
+    title.textContent = `${label} — узел на маршруте`;
+    ellipse.appendChild(title);
+    labelsLayer.appendChild(ellipse);
   }
 
   for (const { x, y, codes } of drawnPoints.values()) {
@@ -548,6 +587,7 @@ function drawRouteOverlay(svgEl, segments, startCode, endCode) {
     pointsLayer.appendChild(wrap);
   }
 
+  g.appendChild(labelsLayer);
   g.appendChild(linesLayer);
   g.appendChild(pointsLayer);
   svgEl.appendChild(g);
@@ -1014,7 +1054,7 @@ btnFullscreen.addEventListener('click', () => {
 // Паттерн скопирован с оригинального сайта (konstruktor/index.html):
 // фоновая проверка версии на сервере, баннер показывается ТОЛЬКО если там
 // реально более новая версия — не постоянная надпись "обновите вкладку".
-const CURRENT_VERSION = 'v0.3';
+const CURRENT_VERSION = 'v0.4';
 
 function _parseVer(s) {
   const m = s && s.match(/v(\d+)\.(\d+)/);
