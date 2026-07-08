@@ -624,12 +624,19 @@ function attachZoomPan(container) {
   };
 }
 
+// Кэш загруженных SVG по id файла на Диске — заполняется целиком при выборе
+// здания (см. renderSheetSelect), чтобы переключение между листами внутри уже
+// выбранного здания было мгновенным (без похода в Drive API на каждый клик).
+const SVG_CACHE = new Map();
+
 async function showSheet(frameHolder, sheet) {
   frameHolder.innerHTML = '';
   frameHolder.dataset.designation = sheetDesignation(sheet) || '';
-  frameHolder.textContent = 'Загружаю схему…';
+  const cached = SVG_CACHE.get(sheet.id);
+  if (!cached) frameHolder.textContent = 'Загружаю схему…';
   try {
-    const svgText = await fetchFileContent(sheet.id);
+    const svgText = cached || await fetchFileContent(sheet.id);
+    if (!cached) SVG_CACHE.set(sheet.id, svgText);
     frameHolder.innerHTML = svgText;
     const svgEl = frameHolder.querySelector('svg');
     if (svgEl) {
@@ -675,6 +682,23 @@ async function renderSheetSelect(buildingName) {
   CURRENT_SHEETS = sheets;
   CURRENT_BUILDING = buildingName;
   CURRENT_ROUTES = await loadRoutesFromFolder(files);
+
+  // Прогружаем ВСЕ листы здания сразу, пока пользователь видит "Загружаю…" —
+  // после этого переключение между листами (select/кнопки маршрута) берёт
+  // готовый SVG из SVG_CACHE и происходит мгновенно, без сетевого запроса.
+  viewer.textContent = `Загружаю схемы здания (0/${sheets.length})…`;
+  let loadedCount = 0;
+  await Promise.all(sheets.map(async (sheet) => {
+    if (!SVG_CACHE.has(sheet.id)) {
+      try {
+        SVG_CACHE.set(sheet.id, await fetchFileContent(sheet.id));
+      } catch (e) {
+        console.error('Не удалось предзагрузить лист', sheet.label, e);
+      }
+    }
+    loadedCount++;
+    viewer.textContent = `Загружаю схемы здания (${loadedCount}/${sheets.length})…`;
+  }));
 
   viewer.innerHTML = '';
   viewer.classList.add('has-sheet');
