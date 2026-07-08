@@ -622,6 +622,29 @@ function attachZoomPan(container) {
     container.scrollLeft = 0;
     container.scrollTop = 0;
   };
+
+  // Автозум/панорамирование к точке трассы (координаты в системе viewBox
+  // SVG). Используется после выбора кабеля и после каждого перехода между
+  // листами (см. renderRouteStep) — так "тянет к началу" сохраняется и при
+  // смене листа, а не только при первом открытии маршрута.
+  // rect.width/scale даёт РАЗМЕР БЕЗ учёта текущего масштаба (transform не
+  // меняет layout-размер, только визуальный) — так можно пересчитать
+  // пиксельную позицию точки независимо от того, с каким scale вызвали.
+  container.zoomToPoint = (x, y, targetScale = 5) => {
+    const svgEl = getSvg();
+    if (!svgEl) return;
+    const vb = svgEl.viewBox.baseVal;
+    if (!vb || !vb.width || !vb.height) return;
+    const rect = svgEl.getBoundingClientRect();
+    const unscaledWidth = rect.width / scale;
+    const unscaledHeight = rect.height / scale;
+    const pxX = (x - vb.x) / vb.width * unscaledWidth;
+    const pxY = (y - vb.y) / vb.height * unscaledHeight;
+    scale = Math.min(maxScale, Math.max(minScale, targetScale));
+    svgEl.style.transform = scale === 1 ? '' : `scale(${scale})`;
+    container.scrollLeft = pxX * scale - container.clientWidth / 2;
+    container.scrollTop = pxY * scale - container.clientHeight / 2;
+  };
 }
 
 // Кэш загруженных SVG по id файла на Диске — заполняется целиком при выборе
@@ -766,7 +789,9 @@ function fileDesignation(file) {
 
 // Рисует конкретный "шаг" маршрута (один файл/лист из ACTIVE_ROUTE.files) и
 // настраивает кнопки "Продолжить"/"Вернуться" под соседние листы маршрута.
-async function renderRouteStep(fileIndex) {
+// direction управляет автозумом (см. ниже): 'start' — самое начало маршрута,
+// 'forward'/'backward' — переход на следующий/предыдущий лист по кнопкам.
+async function renderRouteStep(fileIndex, direction = 'start') {
   const { route, files } = ACTIVE_ROUTE;
   const file = files[fileIndex];
   const designation = fileDesignation(file);
@@ -786,6 +811,18 @@ async function renderRouteStep(fileIndex) {
   const segmentsOnSheet = route.segments.filter(s => s.file === file);
   drawRouteOverlay(svgEl, segmentsOnSheet, route.start_code, route.end_code);
 
+  // Автозум: при открытии начала маршрута или переходе "вперёд" на следующий
+  // лист — подъезжаем к точке ВХОДА в этот лист (первая точка первого
+  // сегмента на нём). При переходе "назад" — к точке, которой лист
+  // стыкуется с уже просмотренным (последняя точка последнего сегмента),
+  // чтобы возврат приводил ровно туда, откуда ушли вперёд.
+  if (segmentsOnSheet.length && frameHolder.zoomToPoint) {
+    const focusFromEnd = direction === 'backward';
+    const focusSeg = segmentsOnSheet[focusFromEnd ? segmentsOnSheet.length - 1 : 0];
+    const focusPoint = focusFromEnd ? focusSeg.points[focusSeg.points.length - 1] : focusSeg.points[0];
+    frameHolder.zoomToPoint(focusPoint[0], focusPoint[1]);
+  }
+
   const nav = document.getElementById('route-nav');
   const backBtn = document.getElementById('route-nav-back');
   const nextBtn = document.getElementById('route-nav-next');
@@ -800,12 +837,12 @@ async function renderRouteStep(fileIndex) {
     if (hasPrev) {
       const prevSheet = CURRENT_SHEETS.find(s => sheetDesignation(s) === fileDesignation(files[fileIndex - 1]));
       backBtn.textContent = `← Вернуться (${prevSheet ? prevSheet.label : fileDesignation(files[fileIndex - 1])})`;
-      backBtn.onclick = () => renderRouteStep(fileIndex - 1);
+      backBtn.onclick = () => renderRouteStep(fileIndex - 1, 'backward');
     }
     if (hasNext) {
       const nextSheet = CURRENT_SHEETS.find(s => sheetDesignation(s) === fileDesignation(files[fileIndex + 1]));
       nextBtn.textContent = `Продолжить (${nextSheet ? nextSheet.label : fileDesignation(files[fileIndex + 1])}) →`;
-      nextBtn.onclick = () => renderRouteStep(fileIndex + 1);
+      nextBtn.onclick = () => renderRouteStep(fileIndex + 1, 'forward');
     }
   }
 }
@@ -977,7 +1014,7 @@ btnFullscreen.addEventListener('click', () => {
 // Паттерн скопирован с оригинального сайта (konstruktor/index.html):
 // фоновая проверка версии на сервере, баннер показывается ТОЛЬКО если там
 // реально более новая версия — не постоянная надпись "обновите вкладку".
-const CURRENT_VERSION = 'v0.1';
+const CURRENT_VERSION = 'v0.3';
 
 function _parseVer(s) {
   const m = s && s.match(/v(\d+)\.(\d+)/);
