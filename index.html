@@ -133,6 +133,14 @@ select {
 }
 .btn-primary:hover { background: var(--navy-light); }
 
+.btn-secondary {
+  display: inline-flex; align-items: center; gap: 7px; padding: 9px 20px;
+  background: var(--surface); color: var(--gray-700); border: 1.5px solid var(--gray-200);
+  border-radius: var(--radius); font-size: 14px; font-weight: 600; cursor: pointer;
+  transition: background .15s, border-color .15s; margin-left: 8px;
+}
+.btn-secondary:hover { background: var(--gray-50); border-color: var(--gray-400); }
+
 .viewer-placeholder {
   background: var(--navy-dark);
   border-radius: var(--radius);
@@ -147,6 +155,7 @@ select {
 #sheet-frame-holder {
   overflow: auto;
   max-height: 75vh;
+  user-select: none;
 }
 .card-body:fullscreen #sheet-frame-holder,
 .card-body:-webkit-full-screen #sheet-frame-holder {
@@ -212,6 +221,7 @@ select {
         <input type="text" id="cable-id-input" placeholder="например, 00KPC10CS001-5001 или 00.00UKS10.104/0 00.00UKS10.106/2 ...">
       </div>
       <button class="btn-primary" id="btn-show-route">Показать трассу</button>
+      <button class="btn-secondary" id="btn-clear-route" type="button">Очистить</button>
     </div>
   </div>
 
@@ -422,15 +432,29 @@ function drawRouteOverlay(svgEl, segments, startCode, endCode) {
   svgEl.appendChild(g);
 }
 
-// Зум колёсиком мыши по схеме: масштабируем сам <svg> через CSS-transform,
-// а прокрутку контейнера подстраиваем так, чтобы точка под курсором
-// оставалась на месте (иначе при зуме "уезжает" в сторону). Работает
-// одинаково и в обычном режиме, и в полноэкранном — оба раза это один и
-// тот же #sheet-frame-holder с overflow:auto.
-function attachWheelZoom(container, svgEl) {
+// Зум колёсиком + перетаскивание (pan) схемы. Масштабируем сам <svg> через
+// CSS-transform, прокрутку контейнера подстраиваем так, чтобы точка под
+// курсором оставалась на месте при зуме. Работает одинаково в обычном
+// режиме и в полноэкранном — оба раза это один и тот же #sheet-frame-holder
+// с overflow:auto.
+//
+// Слушатели вешаем на frameHolder только один раз (флаг zoomPanAttached),
+// а не при каждой смене листа — иначе при переключении листов слушатели
+// накапливались бы и зум/pan постепенно "ускорялся" бы кратно их числу.
+// Текущий <svg> внутри контейнера ищем каждый раз через querySelector,
+// а не храним ссылку в замыкании — так работает и для листа, который
+// подставили позже через showSheet.
+function attachZoomPan(container) {
+  if (container.dataset.zoomPanAttached === '1') return;
+  container.dataset.zoomPanAttached = '1';
+
   let scale = 1;
   const minScale = 1, maxScale = 12;
+  const getSvg = () => container.querySelector('svg');
+
   container.addEventListener('wheel', (e) => {
+    const svgEl = getSvg();
+    if (!svgEl) return;
     e.preventDefault();
     const rect = container.getBoundingClientRect();
     const cursorX = e.clientX - rect.left;
@@ -444,6 +468,39 @@ function attachWheelZoom(container, svgEl) {
     container.scrollLeft = (container.scrollLeft + cursorX) * ratio - cursorX;
     container.scrollTop = (container.scrollTop + cursorY) * ratio - cursorY;
   }, { passive: false });
+
+  let isPanning = false, startX, startY, startScrollLeft, startScrollTop;
+  container.style.cursor = 'grab';
+  container.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || !getSvg()) return;
+    isPanning = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    startScrollLeft = container.scrollLeft;
+    startScrollTop = container.scrollTop;
+    container.style.cursor = 'grabbing';
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!isPanning) return;
+    container.scrollLeft = startScrollLeft - (e.clientX - startX);
+    container.scrollTop = startScrollTop - (e.clientY - startY);
+  });
+  window.addEventListener('mouseup', () => {
+    if (!isPanning) return;
+    isPanning = false;
+    container.style.cursor = 'grab';
+  });
+
+  // При открытии нового листа масштаб сбрасываем на 1 — новая схема должна
+  // показываться целиком, а не с зумом, оставшимся от предыдущего листа.
+  container.resetZoomPan = () => {
+    scale = 1;
+    const svgEl = getSvg();
+    if (svgEl) svgEl.style.transform = '';
+    container.scrollLeft = 0;
+    container.scrollTop = 0;
+  };
 }
 
 async function showSheet(frameHolder, sheet) {
@@ -459,7 +516,8 @@ async function showSheet(frameHolder, sheet) {
       svgEl.style.height = 'auto';
       svgEl.removeAttribute('width');
       svgEl.removeAttribute('height');
-      attachWheelZoom(frameHolder, svgEl);
+      attachZoomPan(frameHolder);
+      if (frameHolder.resetZoomPan) frameHolder.resetZoomPan();
     }
     return svgEl;
   } catch (e) {
@@ -636,6 +694,15 @@ document.getElementById("btn-show-route").addEventListener("click", () => {
   }
 
   showCableRoute(rawInput);
+});
+
+// Очистить блок 2: сбрасываем поле ввода и убираем подсветку трассы с
+// текущего листа (если она была нарисована), сам лист при этом остаётся
+// открытым — очищаем только то, что относится к поиску трассы.
+document.getElementById("btn-clear-route").addEventListener("click", () => {
+  document.getElementById("cable-id-input").value = "";
+  const overlay = document.querySelector('#sheet-frame-holder svg #route-overlay');
+  if (overlay) overlay.remove();
 });
 
 // ─── Полноэкранный просмотр схемы (Блок 3) ───────────────────────────────
