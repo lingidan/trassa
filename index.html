@@ -4,7 +4,162 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Трасса — отслеживание кабельных трасс</title>
-<link rel="stylesheet" href="style.css">
+<style>
+/* Палитра и базовые паттерны скопированы с оригинального сайта
+   (lingidan.github.io/konstruktor, "Наряд-допуск"), чтобы оба сайта выглядели
+   как одно семейство продуктов. */
+:root {
+  --navy: #1a3a5c;
+  --navy-light: #234d78;
+  --navy-dark: #122840;
+  --accent: #2e7abf;
+  --accent-light: #e8f2fa;
+  --white: #ffffff;
+  --gray-50: #f7f9fc;
+  --gray-100: #eef2f7;
+  --gray-200: #d8e2ee;
+  --gray-400: #8fa6be;
+  --gray-700: #3d5168;
+  --text: #1e2d3d;
+  --radius: 8px;
+  --shadow: 0 2px 12px rgba(26,58,92,.12);
+  --shadow-sm: 0 1px 4px rgba(26,58,92,.08);
+  --bg-page: #eef2f7;
+  --surface: #ffffff;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--bg-page);
+  color: var(--text);
+  min-height: 100vh;
+  padding: 24px 16px 48px;
+}
+
+.page-header {
+  max-width: 1000px;
+  margin: 0 auto 28px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.page-header .logo {
+  width: 44px; height: 44px;
+  background: var(--navy);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  font-size: 22px;
+}
+.page-header h1 { font-size: 22px; font-weight: 700; color: var(--text); letter-spacing: -.3px; }
+.page-header p  { font-size: 13px; color: var(--gray-400); margin-top: 2px; }
+.page-header .header-meta {
+  font-size: 12px; color: var(--gray-400); text-align: right; white-space: nowrap;
+}
+.page-header .header-meta .ver {
+  font-size: 14px; font-weight: 700; color: var(--navy); margin-bottom: 4px;
+}
+
+.container { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+
+.card { background: var(--surface); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+
+.card-header {
+  background: var(--navy);
+  padding: 14px 22px;
+  display: flex; align-items: center; gap: 10px;
+}
+.card-header .block-num {
+  background: rgba(255,255,255,.18);
+  color: white; font-size: 11px; font-weight: 700;
+  letter-spacing: .5px; padding: 3px 8px; border-radius: 20px; text-transform: uppercase;
+}
+.card-header h2 { color: var(--white); font-size: 15px; font-weight: 600; flex: 1; }
+
+.btn-fullscreen {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.3);
+  color: white; font-size: 12px; font-weight: 600; letter-spacing: .2px;
+  padding: 6px 12px; border-radius: 6px; cursor: pointer;
+  transition: background .15s;
+}
+.btn-fullscreen:hover { background: rgba(255,255,255,.26); }
+
+/* Полноэкранный режим схемы: :fullscreen (Fullscreen API) на .card-body
+   растягиваем на весь экран и даём прокрутку, т.к. схема обычно больше
+   вьюпорта по высоте. */
+.card-body:fullscreen, .card-body:-webkit-full-screen {
+  background: var(--navy-dark);
+  padding: 16px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.card-body:fullscreen .viewer-placeholder,
+.card-body:-webkit-full-screen .viewer-placeholder {
+  min-height: 0;
+  flex: 1;
+}
+
+.card-body { padding: 22px; }
+
+.field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 16px; }
+.field label { font-size: 12px; font-weight: 600; color: var(--gray-700); letter-spacing: .2px; text-transform: uppercase; }
+.field .hint { font-size: 11px; color: var(--gray-400); margin-top: 2px; }
+
+input[type="text"], select, .field textarea {
+  width: 100%; padding: 9px 12px;
+  border: 1.5px solid var(--gray-200);
+  border-radius: var(--radius);
+  font-size: 14px; color: var(--text); background: var(--surface);
+  transition: border-color .15s, box-shadow .15s;
+  font-family: inherit; appearance: none; -webkit-appearance: none;
+}
+input:focus, select:focus, .field textarea:focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(46,122,191,.18);
+}
+select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238fa6be' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 12px center; padding-right: 34px; cursor: pointer;
+}
+
+.btn-primary {
+  display: inline-flex; align-items: center; gap: 7px; padding: 9px 20px;
+  background: var(--accent); color: white; border: none;
+  border-radius: var(--radius); font-size: 14px; font-weight: 600; cursor: pointer;
+  transition: background .15s;
+}
+.btn-primary:hover { background: var(--navy-light); }
+
+.viewer-placeholder {
+  background: var(--navy-dark);
+  border-radius: var(--radius);
+  min-height: 420px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--gray-400);
+  font-size: 14px; text-align: center; padding: 20px;
+}
+.viewer-placeholder.has-sheet {
+  display: block; text-align: left; padding: 16px;
+}
+#sheet-frame-holder svg { display: block; }
+
+/* Баннер обновления версии — появляется, только когда реально есть новая
+   версия (см. checkVersionBackground() в script.js), не статичная надпись. */
+#updateBanner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 99999;
+  background: var(--accent); color: #fff; padding: 10px 16px;
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  font-size: 13px; font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,.15);
+}
+#updateBannerBtn {
+  background: rgba(255,255,255,.22); border: none; color: white;
+  border-radius: 6px; padding: 5px 14px; cursor: pointer; font-size: 13px; font-weight: 700;
+}
+
+</style>
 </head>
 <body>
 
@@ -66,6 +221,424 @@
 
 </div>
 
-<script src="script.js"></script>
+<script>
+// ─── Реестр зданий (Google Sheets, без бэкенда) ─────────────────────────
+// Читаем через gviz-эндпоинт (работает без авторизации для таблиц,
+// открытых по ссылке — в отличие от /export?format=csv, который требует
+// сессию Google). Формат листа "Здания": колонка A — название,
+// колонка B — ссылка на папку со схемами на Google Диске.
+const SHEET_ID = '10AntsyOD2K_pe_3DA_KP3z2Vc9scESGCmtU0yIALBPk';
+const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv`;
+
+let BUILDINGS = {}; // { "Название здания": "ссылка на папку" }
+
+// Публичный API-ключ Google Drive (ограничен по HTTP-referrer в Cloud Console
+// на домен сайта — см. README/ПРОЕКТ_ЗАМЕТКИ.md, раздел "Настройка Drive API").
+// Нужен только чтобы получать список файлов внутри публичной папки здания —
+// сама папка должна быть расшарена "Всем, у кого есть ссылка".
+const DRIVE_API_KEY = 'AIzaSyAs7AXssiYTrtJRCSioHfEBgH7FEQ2p6zk';
+
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += c;
+    } else if (c === '"') inQuotes = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); field = '';
+      rows.push(row); row = [];
+    } else field += c;
+  }
+  if (field || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+async function loadBuildings() {
+  const select = document.getElementById("building-select");
+  try {
+    const res = await fetch(SHEET_CSV_URL, { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const rows = parseCSV(await res.text());
+
+    BUILDINGS = {};
+    // первая строка — заголовки ("Здание:", "Ссылка"), пропускаем
+    for (const row of rows.slice(1)) {
+      const name = (row[0] || '').trim();
+      const link = (row[1] || '').trim();
+      if (name) BUILDINGS[name] = link;
+    }
+
+    select.innerHTML = '<option value="">— выберите здание —</option>';
+    const names = Object.keys(BUILDINGS);
+    if (names.length === 0) {
+      select.innerHTML = '<option value="">— зданий пока нет в реестре —</option>';
+      return;
+    }
+    for (const name of names) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      select.appendChild(opt);
+    }
+  } catch (e) {
+    select.innerHTML = '<option value="">— ошибка загрузки реестра —</option>';
+    console.error('Не удалось загрузить реестр зданий:', e);
+  }
+}
+loadBuildings();
+
+// ─── Список файлов схем внутри папки здания (Google Drive API v3) ───────
+// Единственное, что пользователь вручную ведёт в реестре — ссылка на папку
+// здания целиком (столбец "Ссылка" в Лист1). Список файлов и их отметки
+// сайт получает сам через Drive API (files.list по ID папки), парсинг
+// отметки — из имени файла (соглашение "<отметка>_<название> (<обозначение>).svg",
+// см. _ПРАВИЛА.txt внутри папки на Диске). Файлы без отметки в начале имени
+// (например "Общие данные (EDB0001).svg") просто идут без отметки в списке.
+
+function extractFolderId(link) {
+  const m = link.match(/\/folders\/([a-zA-Z0-9_-]+)/) || link.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+
+function parseElevationFromName(name) {
+  const m = name.match(/^([+-]?\d+\.\d+)_(.+)$/);
+  if (m) return { elevation: m[1], label: m[2].replace(/\.[^.]+$/, '') };
+  return { elevation: null, label: name.replace(/\.[^.]+$/, '') };
+}
+
+// Один запрос листингом получает ВСЕ файлы папки здания сразу — из него
+// строим и список SVG-листов, и находим routes.json (маршруты кабелей).
+// Так routes.json живёт рядом со схемами прямо в папке здания на Диске
+// (не в коде сайта) — обновление маршрутов не требует переразвёртывания
+// сайта, только перезаливки одного файла на Диск.
+async function listFolderFiles(folderId) {
+  const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+trashed=false&fields=files(id,name)&key=${DRIVE_API_KEY}&pageSize=1000`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  return data.files || [];
+}
+
+function buildSheetsList(files) {
+  return files
+    .filter(f => f.name.toLowerCase().endsWith('.svg'))
+    .map(f => ({ id: f.id, name: f.name, ...parseElevationFromName(f.name) }))
+    .sort((a, b) => {
+      const av = a.elevation === null ? -Infinity : parseFloat(a.elevation);
+      const bv = b.elevation === null ? -Infinity : parseFloat(b.elevation);
+      return av - bv;
+    });
+}
+
+// Встроенный просмотрщик Drive (.../preview в iframe) не умеет нормально
+// показывать наши большие SVG (ошибка "не удалось загрузить страницы") —
+// вместо этого забираем сырой файл через Drive API (alt=media) и вставляем
+// его в страницу напрямую, как отдельный inline SVG (та же причина, по
+// которой в render_full_sheet.py каждый SVG заворачивался в свой iframe —
+// стили <style> разных SVG-файлов конфликтуют, если вставлять их все на
+// одну страницу одновременно; здесь на странице всегда только один SVG
+// одновременно, поэтому можно вставлять как обычный div).
+async function fetchFileContent(fileId) {
+  const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${DRIVE_API_KEY}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.text();
+}
+
+// Текущее состояние выбранного здания/листов — нужно доступным из обработчика
+// кнопки "Показать трассу" в Блоке 2, не только из renderSheetSelect().
+let CURRENT_SHEETS = [];
+let CURRENT_BUILDING = null;
+let CURRENT_ROUTES = null; // { cable_id: { start_code, end_code, segments } }
+
+// Обозначение листа (ELH0001 и т.п.) — вытаскиваем из подписи в скобках,
+// чтобы сопоставлять лист из Drive-листинга с файлом в data/*_routes.json
+// (там имена файлов вида "...-ELH0001.dxf").
+function sheetDesignation(sheet) {
+  const m = sheet.label.match(/\(([A-Z]+\d+)\)/);
+  return m ? m[1] : null;
+}
+
+// routes.json ищем прямо в папке здания на Диске (рядом со схемами), а не
+// в коде сайта — файл готовит export_routes_for_site.py локально и просто
+// заливается в ту же папку, что и SVG-листы.
+async function loadRoutesFromFolder(files) {
+  const routesFile = files.find(f => f.name.toLowerCase() === 'routes.json');
+  if (!routesFile) return null;
+  try {
+    const text = await fetchFileContent(routesFile.id);
+    return JSON.parse(text);
+  } catch (e) {
+    console.error('Не удалось загрузить/разобрать routes.json:', e);
+    return null;
+  }
+}
+
+function drawRouteOverlay(svgEl, segments, startCode, endCode) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const vb = svgEl.viewBox.baseVal;
+  const r = (vb && vb.width ? vb.width : 1000000) * 0.004;
+  const g = document.createElementNS(ns, 'g');
+  g.setAttribute('id', 'route-overlay');
+  const drawnPoints = new Set();
+  for (const seg of segments) {
+    const [[x1, y1], [x2, y2]] = seg.points;
+    const line = document.createElementNS(ns, 'polyline');
+    line.setAttribute('points', `${x1},${y1} ${x2},${y2}`);
+    line.setAttribute('stroke', '#ff0000');
+    line.setAttribute('stroke-width', r * 0.5);
+    line.setAttribute('fill', 'none');
+    g.appendChild(line);
+
+    for (const [code, x, y] of [[seg.from, x1, y1], [seg.to, x2, y2]]) {
+      const key = x + ',' + y;
+      if (drawnPoints.has(key)) continue;
+      drawnPoints.add(key);
+      const color = code === startCode ? '#00c800' : code === endCode ? '#0000ff' : '#ff9600';
+      const circle = document.createElementNS(ns, 'circle');
+      circle.setAttribute('cx', x);
+      circle.setAttribute('cy', y);
+      circle.setAttribute('r', r);
+      circle.setAttribute('fill', color);
+      g.appendChild(circle);
+    }
+  }
+  svgEl.appendChild(g);
+}
+
+async function showSheet(frameHolder, sheet) {
+  frameHolder.innerHTML = '';
+  frameHolder.dataset.designation = sheetDesignation(sheet) || '';
+  frameHolder.textContent = 'Загружаю схему…';
+  try {
+    const svgText = await fetchFileContent(sheet.id);
+    frameHolder.innerHTML = svgText;
+    const svgEl = frameHolder.querySelector('svg');
+    if (svgEl) {
+      svgEl.style.width = '100%';
+      svgEl.style.height = 'auto';
+      svgEl.removeAttribute('width');
+      svgEl.removeAttribute('height');
+    }
+    return svgEl;
+  } catch (e) {
+    console.error('Не удалось загрузить SVG схемы:', e);
+    frameHolder.textContent = 'Не удалось загрузить схему (проверь Drive API ключ и доступ к файлу)';
+    return null;
+  }
+}
+
+async function renderSheetSelect(buildingName) {
+  const viewer = document.getElementById("viewer");
+  const folderLink = BUILDINGS[buildingName];
+  const folderId = folderLink && extractFolderId(folderLink);
+  if (!folderId) {
+    viewer.textContent = "Не удалось определить папку здания по ссылке в реестре";
+    return;
+  }
+
+  viewer.textContent = "Загружаю список листов…";
+  let files;
+  try {
+    files = await listFolderFiles(folderId);
+  } catch (e) {
+    console.error('Не удалось получить список файлов из папки:', e);
+    viewer.textContent = "Ошибка загрузки списка листов (проверь Drive API ключ и доступ к папке)";
+    return;
+  }
+  const sheets = buildSheetsList(files);
+  if (sheets.length === 0) {
+    viewer.textContent = "В папке этого здания пока нет файлов";
+    return;
+  }
+
+  CURRENT_SHEETS = sheets;
+  CURRENT_BUILDING = buildingName;
+  CURRENT_ROUTES = await loadRoutesFromFolder(files);
+
+  viewer.innerHTML = '';
+  viewer.classList.add('has-sheet');
+  const field = document.createElement('div');
+  field.className = 'field';
+  const label = document.createElement('label');
+  label.textContent = 'Лист схемы';
+  const select = document.createElement('select');
+  select.id = 'sheet-select';
+  select.innerHTML = '<option value="">— выберите лист —</option>' +
+    sheets.map((s, i) => `<option value="${i}">${s.elevation ? 'Отметка ' + s.elevation + ' — ' : ''}${s.label}</option>`).join('');
+  field.appendChild(label);
+  field.appendChild(select);
+  viewer.appendChild(field);
+
+  const frameHolder = document.createElement('div');
+  frameHolder.id = 'sheet-frame-holder';
+  viewer.appendChild(frameHolder);
+
+  select.addEventListener('change', () => {
+    if (!select.value) { frameHolder.innerHTML = ''; return; }
+    showSheet(frameHolder, sheets[Number(select.value)]);
+  });
+}
+
+// Показывает маршрут кабеля: находит первый лист, где у него есть участки,
+// переключает на него select и рисует поверх поставленной схемы линию+точки.
+// (Кабель может проходить через несколько листов — сейчас показываем только
+// первый по порядку; переключение между листами маршрута — см. TODO в
+// ПРОЕКТ_ЗАМЕТКИ.md.)
+async function showCableRoute(cableId) {
+  const viewer = document.getElementById("viewer");
+  // Если список листов ещё не отрисован (нет .has-sheet) — можно перезаписать
+  // viewer целиком, иначе (здание уже выбрано) сообщение об ошибке пишем в
+  // frameHolder, чтобы не терять сам выпадающий список.
+  const errorTarget = () => document.getElementById('sheet-frame-holder') || viewer;
+  if (!CURRENT_BUILDING) {
+    viewer.textContent = "Сначала выберите здание";
+    return;
+  }
+  if (!CURRENT_ROUTES) {
+    errorTarget().textContent = "Для этого здания нет данных о маршрутах кабелей";
+    return;
+  }
+  const route = CURRENT_ROUTES[cableId];
+  if (!route) {
+    errorTarget().textContent = `Кабель "${cableId}" не найден в реестре маршрутов`;
+    return;
+  }
+
+  const firstFile = route.segments[0].file;
+  const designation = (firstFile.match(/-([A-Z]+\d+)\.dxf$/) || [])[1];
+  const sheetIndex = CURRENT_SHEETS.findIndex(s => sheetDesignation(s) === designation);
+  if (sheetIndex === -1) {
+    errorTarget().textContent = `Не найден лист "${designation}" в папке этого здания`;
+    return;
+  }
+
+  const select = document.getElementById('sheet-select');
+  select.value = String(sheetIndex);
+  const frameHolder = document.getElementById('sheet-frame-holder');
+  const svgEl = await showSheet(frameHolder, CURRENT_SHEETS[sheetIndex]);
+  if (!svgEl) return;
+  const segmentsOnSheet = route.segments.filter(s => s.file === firstFile);
+  drawRouteOverlay(svgEl, segmentsOnSheet, route.start_code, route.end_code);
+}
+
+document.getElementById("building-select").addEventListener("change", (e) => {
+  const buildingName = e.target.value;
+  if (!buildingName) {
+    const viewer = document.getElementById("viewer");
+    viewer.classList.remove('has-sheet');
+    viewer.textContent = "Выберите здание и кабель, чтобы увидеть подсветку трассы";
+    return;
+  }
+  renderSheetSelect(buildingName);
+});
+
+document.getElementById("btn-show-route").addEventListener("click", () => {
+  const cableId = document.getElementById("cable-id-input").value.trim();
+  const viewer = document.getElementById("viewer");
+  if (!cableId) {
+    viewer.textContent = "Введите маркировку кабеля";
+    return;
+  }
+  showCableRoute(cableId);
+});
+
+// ─── Полноэкранный просмотр схемы (Блок 3) ───────────────────────────────
+// В полный экран разворачиваем .card-body (родитель #viewer), а не сам
+// #viewer, чтобы вместе со схемой оставался виден выпадающий список листов.
+const fullscreenTarget = document.getElementById('viewer').closest('.card-body');
+const btnFullscreen = document.getElementById('btn-fullscreen');
+
+// requestFullscreen/exitFullscreen — с префиксом для старого Safari
+// (webkitRequestFullscreen), у остальных актуальных браузеров без префикса.
+function requestFs(el) {
+  const fn = el.requestFullscreen || el.webkitRequestFullscreen;
+  return fn.call(el);
+}
+function exitFs() {
+  const fn = document.exitFullscreen || document.webkitExitFullscreen;
+  return fn.call(document);
+}
+function fullscreenElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement;
+}
+
+btnFullscreen.addEventListener('click', () => {
+  if (!fullscreenElement()) {
+    Promise.resolve(requestFs(fullscreenTarget)).catch(err => {
+      console.error('Не удалось открыть полноэкранный режим:', err);
+    });
+  } else {
+    exitFs();
+  }
+});
+
+['fullscreenchange', 'webkitfullscreenchange'].forEach(evt => {
+  document.addEventListener(evt, () => {
+    const isFullscreen = fullscreenElement() === fullscreenTarget;
+    btnFullscreen.textContent = isFullscreen ? '⛶ Свернуть' : '⛶ На весь экран';
+  });
+});
+
+// ─── Проверка актуальности версии ──────────────────────────────────────
+// Паттерн скопирован с оригинального сайта (konstruktor/index.html):
+// фоновая проверка версии на сервере, баннер показывается ТОЛЬКО если там
+// реально более новая версия — не постоянная надпись "обновите вкладку".
+const CURRENT_VERSION = 'v0.1';
+
+function _parseVer(s) {
+  const m = s && s.match(/v(\d+)\.(\d+)/);
+  return m ? parseInt(m[1]) * 1000 + parseInt(m[2]) : 0;
+}
+
+let _versionBannerShown = false;
+
+function showUpdateBanner(remoteVersion) {
+  if (_versionBannerShown) return;
+  _versionBannerShown = true;
+  const bar = document.createElement('div');
+  bar.id = 'updateBanner';
+  bar.innerHTML = `<span>Доступна новая версия ${remoteVersion} — обновите страницу, чтобы получить последние исправления</span>` +
+    `<button id="updateBannerBtn">Обновить</button>`;
+  document.body.appendChild(bar);
+  document.getElementById('updateBannerBtn').onclick = () => location.reload(true);
+}
+
+async function _fetchRemoteVersion() {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 3000);
+  try {
+    // Проверяем актуальную копию по своему же URL (работает на любом хостинге,
+    // не завязано на конкретный домен)
+    const res = await fetch(window.location.href, { cache: 'no-store', signal: ctrl.signal });
+    const html = await res.text();
+    const match = html.match(/CURRENT_VERSION = '(v\d+\.\d+)'/) || html.match(/id="version-display">(v\d+\.\d+)</);
+    return match ? match[1] : null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function checkVersionBackground() {
+  try {
+    const remoteVersion = await _fetchRemoteVersion();
+    if (remoteVersion && _parseVer(remoteVersion) > _parseVer(CURRENT_VERSION)) {
+      showUpdateBanner(remoteVersion);
+    }
+  } catch (e) {
+    // тихо игнорируем сетевые ошибки
+  }
+}
+setTimeout(checkVersionBackground, 2000);
+setInterval(checkVersionBackground, 10 * 60 * 1000);
+
+</script>
 </body>
 </html>
