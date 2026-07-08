@@ -199,8 +199,8 @@ select {
     </div>
     <div class="card-body">
       <div class="field">
-        <label>Маркировка кабеля (KKS)</label>
-        <input type="text" id="cable-id-input" placeholder="например, 00KPC10CS001-5001">
+        <label>Маркировка кабеля (KKS) или трассировка из Excel</label>
+        <input type="text" id="cable-id-input" placeholder="например, 00KPC10CS001-5001 или 00.00UKS10.104/0 00.00UKS10.106/2 ...">
       </div>
       <button class="btn-primary" id="btn-show-route">Показать трассу</button>
     </div>
@@ -540,14 +540,69 @@ document.getElementById("building-select").addEventListener("change", (e) => {
   renderSheetSelect(buildingName);
 });
 
+// Разбираем текст из столбца "Трассировка" Excel-задания: последовательность
+// узлов вида "00.00UKS10.104/0 00.00UKS10.106/2 00.00UKS10.110V/0 ...",
+// где "/N" — индекс яруса лотка (не часть кода узла), а в конце иногда идёт
+// свободный текст-примечание ("Далее в металлорукаве...") — на нём просто
+// останавливаемся.
+function parseTraceSequence(text) {
+  const tokens = text.trim().split(/\s+/);
+  const codes = [];
+  for (const t of tokens) {
+    const m = t.match(/^([\d.]+[A-Za-zА-Яа-я]+\d+\.\d+V?)(?:\/\S+)?$/);
+    if (!m) break;
+    codes.push(m[1]);
+  }
+  return codes;
+}
+
+// Ищем в реестре маршрутов кабель, чья цепочка узлов (from → to → to → ...)
+// совпадает с введённой последовательностью — так работает поиск по
+// трассировке, вставленной прямо из столбца "Трассировка" Excel-задания.
+function findCableIdByTraceSequence(codes) {
+  if (!CURRENT_ROUTES || codes.length < 2) return null;
+  for (const [id, route] of Object.entries(CURRENT_ROUTES)) {
+    const chain = [route.segments[0].from, ...route.segments.map(s => s.to)];
+    if (chain.length === codes.length && chain.every((c, i) => c === codes[i])) {
+      return id;
+    }
+  }
+  return null;
+}
+
 document.getElementById("btn-show-route").addEventListener("click", () => {
-  const cableId = document.getElementById("cable-id-input").value.trim();
+  const rawInput = document.getElementById("cable-id-input").value.trim();
   const viewer = document.getElementById("viewer");
-  if (!cableId) {
-    viewer.textContent = "Введите маркировку кабеля";
+  if (!rawInput) {
+    viewer.textContent = "Введите маркировку кабеля или трассировку";
     return;
   }
-  showCableRoute(cableId);
+
+  // Если введённый текст похож на трассировку (несколько узлов через пробел,
+  // а не одиночный KKS-код кабеля) — сначала ищем по последовательности узлов.
+  const looksLikeTrace = /\s/.test(rawInput) || /^[\d.]+[A-Za-zА-Яа-я]+\d+\.\d+V?(\/\S+)?$/.test(rawInput);
+  if (looksLikeTrace) {
+    if (!CURRENT_BUILDING) {
+      viewer.textContent = "Сначала выберите здание";
+      return;
+    }
+    const errorTarget = () => document.getElementById('sheet-frame-holder') || viewer;
+    const codes = parseTraceSequence(rawInput);
+    if (codes.length < 2) {
+      errorTarget().textContent = "Не удалось распознать последовательность узлов трассировки";
+      return;
+    }
+    const cableId = findCableIdByTraceSequence(codes);
+    if (!cableId) {
+      errorTarget().textContent = "Трасса с такой последовательностью узлов не найдена в реестре маршрутов";
+      return;
+    }
+    document.getElementById("cable-id-input").value = cableId;
+    showCableRoute(cableId);
+    return;
+  }
+
+  showCableRoute(rawInput);
 });
 
 // ─── Полноэкранный просмотр схемы (Блок 3) ───────────────────────────────
