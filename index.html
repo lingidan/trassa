@@ -144,7 +144,16 @@ select {
 .viewer-placeholder.has-sheet {
   display: block; text-align: left; padding: 16px;
 }
-#sheet-frame-holder svg { display: block; }
+#sheet-frame-holder {
+  overflow: auto;
+  max-height: 75vh;
+}
+.card-body:fullscreen #sheet-frame-holder,
+.card-body:-webkit-full-screen #sheet-frame-holder {
+  max-height: none;
+  height: 100%;
+}
+#sheet-frame-holder svg { display: block; transform-origin: 0 0; }
 
 /* Баннер обновления версии — появляется, только когда реально есть новая
    версия (см. checkVersionBackground() в script.js), не статичная надпись. */
@@ -413,6 +422,30 @@ function drawRouteOverlay(svgEl, segments, startCode, endCode) {
   svgEl.appendChild(g);
 }
 
+// Зум колёсиком мыши по схеме: масштабируем сам <svg> через CSS-transform,
+// а прокрутку контейнера подстраиваем так, чтобы точка под курсором
+// оставалась на месте (иначе при зуме "уезжает" в сторону). Работает
+// одинаково и в обычном режиме, и в полноэкранном — оба раза это один и
+// тот же #sheet-frame-holder с overflow:auto.
+function attachWheelZoom(container, svgEl) {
+  let scale = 1;
+  const minScale = 1, maxScale = 12;
+  container.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const rect = container.getBoundingClientRect();
+    const cursorX = e.clientX - rect.left;
+    const cursorY = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const newScale = Math.min(maxScale, Math.max(minScale, scale * factor));
+    if (newScale === scale) return;
+    const ratio = newScale / scale;
+    scale = newScale;
+    svgEl.style.transform = scale === 1 ? '' : `scale(${scale})`;
+    container.scrollLeft = (container.scrollLeft + cursorX) * ratio - cursorX;
+    container.scrollTop = (container.scrollTop + cursorY) * ratio - cursorY;
+  }, { passive: false });
+}
+
 async function showSheet(frameHolder, sheet) {
   frameHolder.innerHTML = '';
   frameHolder.dataset.designation = sheetDesignation(sheet) || '';
@@ -426,6 +459,7 @@ async function showSheet(frameHolder, sheet) {
       svgEl.style.height = 'auto';
       svgEl.removeAttribute('width');
       svgEl.removeAttribute('height');
+      attachWheelZoom(frameHolder, svgEl);
     }
     return svgEl;
   } catch (e) {
@@ -597,7 +631,6 @@ document.getElementById("btn-show-route").addEventListener("click", () => {
       errorTarget().textContent = "Трасса с такой последовательностью узлов не найдена в реестре маршрутов";
       return;
     }
-    document.getElementById("cable-id-input").value = cableId;
     showCableRoute(cableId);
     return;
   }
