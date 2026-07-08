@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Трасса — отслеживание кабельных трасс</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="page-header">
+  <div class="logo">🔌</div>
+  <div style="flex:1">
+    <h1>Трасса</h1>
+    <p>Поиск и подсветка кабельных трасс на схемах здания</p>
+  </div>
+  <div class="header-meta">
+    <div class="ver" id="version-display">v0.1</div>
+    Разработал<br>Лингидан Максим Дмитриевич
+  </div>
+</div>
+
+<div class="container">
+
+  <div class="card">
+    <div class="card-header">
+      <span class="block-num">Блок 1</span>
+      <h2>Выбор здания</h2>
+    </div>
+    <div class="card-body">
+      <div class="field">
+        <label>Здание</label>
+        <select id="building-select">
+          <option value="">— выберите здание —</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="block-num">Блок 2</span>
+      <h2>Поиск трассы</h2>
+    </div>
+    <div class="card-body">
+      <div class="field">
+        <label>Маркировка кабеля (KKS)</label>
+        <input type="text" id="cable-id-input" placeholder="например, 00KPC10CS001-5001">
+      </div>
+      <button class="btn-primary" id="btn-show-route">Показать трассу</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="block-num">Блок 3</span>
+      <h2>Схема</h2>
+      <button class="btn-fullscreen" id="btn-fullscreen" type="button" title="Открыть на весь экран">⛶ На весь экран</button>
+    </div>
+    <div class="card-body">
+      <div class="viewer-placeholder" id="viewer">
+        Выберите здание и кабель, чтобы увидеть подсветку трассы
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
