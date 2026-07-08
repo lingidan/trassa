@@ -408,9 +408,11 @@ function drawRouteOverlay(svgEl, segments, startCode, endCode) {
   g.setAttribute('id', 'route-overlay');
   const drawnPoints = new Set();
   for (const seg of segments) {
-    const [[x1, y1], [x2, y2]] = seg.points;
+    const pts = seg.points;
+    const [x1, y1] = pts[0];
+    const [x2, y2] = pts[pts.length - 1];
     const line = document.createElementNS(ns, 'polyline');
-    line.setAttribute('points', `${x1},${y1} ${x2},${y2}`);
+    line.setAttribute('points', pts.map(([x, y]) => `${x},${y}`).join(' '));
     line.setAttribute('stroke', '#ff0000');
     line.setAttribute('stroke-width', r * 0.5);
     line.setAttribute('fill', 'none');
