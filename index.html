@@ -196,7 +196,7 @@ select {
     <p>Поиск и подсветка кабельных трасс на схемах здания</p>
   </div>
   <div class="header-meta">
-    <div class="ver" id="version-display">v0.1</div>
+    <div class="ver" id="version-display">v0.5</div>
     Разработал<br>Лингидан Максим Дмитриевич
   </div>
 </div>
@@ -225,8 +225,8 @@ select {
     </div>
     <div class="card-body">
       <div class="field">
-        <label>Маркировка кабеля (KKS) или трассировка из Excel</label>
-        <input type="text" id="cable-id-input" placeholder="например, 00KPC10CS001-5001 или 00.00UKS10.104/0 00.00UKS10.106/2 ...">
+        <label>Трассировка (последовательность узлов из Excel)</label>
+        <input type="text" id="cable-id-input" placeholder="например, 00.00UKS10.104/0 00.00UKS10.106/2 00.00UKS10.110V/0 ...">
       </div>
       <button class="btn-primary" id="btn-show-route">Показать трассу</button>
       <button class="btn-secondary" id="btn-clear-route" type="button">Очистить</button>
@@ -383,29 +383,214 @@ async function fetchFileContent(fileId) {
 // кнопки "Показать трассу" в Блоке 2, не только из renderSheetSelect().
 let CURRENT_SHEETS = [];
 let CURRENT_BUILDING = null;
-let CURRENT_ROUTES = null; // { cable_id: { start_code, end_code, segments } }
+let CURRENT_GRAPH_DATA = null; // { labels: {code: [{file,layer,x,y}]}, graphs: {file: {layer: {nodes, edges}}}, snap_tol: {file: n} }
 
 // Обозначение листа (ELH0001 и т.п.) — вытаскиваем из подписи в скобках,
-// чтобы сопоставлять лист из Drive-листинга с файлом в data/*_routes.json
+// чтобы сопоставлять лист из Drive-листинга с файлом в graph_data.json
 // (там имена файлов вида "...-ELH0001.dxf").
 function sheetDesignation(sheet) {
   const m = sheet.label.match(/\(([A-Z]+\d+)\)/);
   return m ? m[1] : null;
 }
 
-// routes.json ищем прямо в папке здания на Диске (рядом со схемами), а не
-// в коде сайта — файл готовит export_routes_for_site.py локально и просто
-// заливается в ту же папку, что и SVG-листы.
-async function loadRoutesFromFolder(files) {
-  const routesFile = files.find(f => f.name.toLowerCase() === 'routes.json');
-  if (!routesFile) return null;
+// graph_data.json (геометрия лотков + позиции меток узлов, БЕЗ привязки к
+// каким-либо конкретным кабелям) ищем прямо в папке здания на Диске, рядом
+// со SVG-листами — файл готовит export_graph_data.py локально и заливается
+// туда же.
+async function loadGraphDataFromFolder(files) {
+  const dataFile = files.find(f => f.name.toLowerCase() === 'graph_data.json');
+  if (!dataFile) return null;
   try {
-    const text = await fetchFileContent(routesFile.id);
+    const text = await fetchFileContent(dataFile.id);
     return JSON.parse(text);
   } catch (e) {
-    console.error('Не удалось загрузить/разобрать routes.json:', e);
+    console.error('Не удалось загрузить/разобрать graph_data.json:', e);
     return null;
   }
+}
+
+// ─── Построение пути трассы для ЛЮБОЙ присланной последовательности узлов ──
+// Путь между каждой соседней парой кодов ищется прямо в браузере по графу
+// лотков конкретного листа (Dijkstra) — сайт не ограничен заранее известным
+// набором кабелей, работает для произвольной трассы, которую пришлёт
+// пользователь (см. ПРОЕКТ_ЗАМЕТКИ.md/feedback: алгоритм не должен зависеть
+// от кабельного журнала).
+
+// Резкий разворот пути (>150°) — признак того, что граф лотков "мостиком"
+// соединил два физически не связанных куска (см. build_route_path.py,
+// тот же порог и то же обоснование).
+const MAX_TURN_ANGLE = 150;
+
+function pathHasSharpBacktrack(points, maxAngle = MAX_TURN_ANGLE) {
+  for (let i = 0; i + 2 < points.length; i++) {
+    const [ax, ay] = points[i], [bx, by] = points[i + 1], [cx, cy] = points[i + 2];
+    const v1x = bx - ax, v1y = by - ay;
+    const v2x = cx - bx, v2y = cy - by;
+    const n1 = Math.hypot(v1x, v1y), n2 = Math.hypot(v2x, v2y);
+    if (n1 < 1e-9 || n2 < 1e-9) continue;
+    const cos = Math.max(-1, Math.min(1, (v1x * v2x + v1y * v2y) / (n1 * n2)));
+    if (Math.acos(cos) * 180 / Math.PI > maxAngle) return true;
+  }
+  return false;
+}
+
+// Находит места, где встречается код узла (может быть на нескольких листах,
+// если чертёж повторяет узел). Терпимо к потере/лишней букве V на конце
+// (см. ПРОЕКТ_ЗАМЕТКИ.md — расхождение написания между журналом и чертежом).
+function resolveLocations(labels, code) {
+  if (labels[code]) return labels[code];
+  const alt = code.endsWith('V') ? code.slice(0, -1) : code + 'V';
+  return labels[alt] || [];
+}
+
+// Проекция точки p на отрезок a-b. Возвращает [projX, projY, dist, t in 0..1].
+function projectPointOnSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-12) return [ax, ay, Math.hypot(px - ax, py - ay), 0];
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const projX = ax + t * dx, projY = ay + t * dy;
+  return [projX, projY, Math.hypot(px - projX, py - projY), t];
+}
+
+// Снаппит точку на ближайшее ребро графа (в пределах tol), при необходимости
+// разбивая это ребро новым узлом в точке проекции. Возвращает индекс узла
+// графа либо null, если рядом (в радиусе tol) вообще нет геометрии лотка.
+// graph.nodes/edges мутируются на месте (добавление узла-проекции) — граф
+// уже загружен целиком на клиенте под конкретное здание, повторного запроса
+// это не требует.
+function snapPointToGraph(graph, x, y, tol) {
+  let best = null; // [dist, edgeIdx, projX, projY, t]
+  for (let i = 0; i < graph.edges.length; i++) {
+    const [ai, bi] = graph.edges[i];
+    const [ax, ay] = graph.nodes[ai];
+    const [bx, by] = graph.nodes[bi];
+    const [projX, projY, dist, t] = projectPointOnSegment(x, y, ax, ay, bx, by);
+    if (best === null || dist < best[0]) best = [dist, i, projX, projY, t, ai, bi];
+  }
+  if (best === null || best[0] > tol) return null;
+  const [, edgeIdx, projX, projY, t, ai, bi] = best;
+  if (t <= 1e-6) return ai;
+  if (t >= 1 - 1e-6) return bi;
+
+  const newIdx = graph.nodes.length;
+  graph.nodes.push([projX, projY]);
+  const [, , weight] = graph.edges[edgeIdx];
+  const lenAProj = Math.hypot(graph.nodes[ai][0] - projX, graph.nodes[ai][1] - projY);
+  const lenProjB = Math.hypot(projX - graph.nodes[bi][0], projY - graph.nodes[bi][1]);
+  graph.edges.splice(edgeIdx, 1);
+  graph.edges.push([ai, newIdx, lenAProj], [newIdx, bi, lenProjB]);
+  return newIdx;
+}
+
+// Кратчайший путь между двумя узлами графа (Dijkstra, простая бинарная куча
+// не нужна — графы одного листа не превышают ~1-1.5 тыс. узлов).
+function dijkstraPath(graph, startIdx, endIdx) {
+  const adjacency = new Map();
+  for (const [a, b, w] of graph.edges) {
+    if (!adjacency.has(a)) adjacency.set(a, []);
+    if (!adjacency.has(b)) adjacency.set(b, []);
+    adjacency.get(a).push([b, w]);
+    adjacency.get(b).push([a, w]);
+  }
+  const dist = new Map([[startIdx, 0]]);
+  const prev = new Map();
+  const visited = new Set();
+  const queue = [[0, startIdx]];
+  while (queue.length) {
+    queue.sort((a, b) => a[0] - b[0]);
+    const [d, u] = queue.shift();
+    if (visited.has(u)) continue;
+    visited.add(u);
+    if (u === endIdx) break;
+    for (const [v, w] of adjacency.get(u) || []) {
+      const nd = d + w;
+      if (!dist.has(v) || nd < dist.get(v)) {
+        dist.set(v, nd);
+        prev.set(v, u);
+        queue.push([nd, v]);
+      }
+    }
+  }
+  if (!dist.has(endIdx)) return null;
+  const path = [endIdx];
+  let cur = endIdx;
+  while (cur !== startIdx) {
+    cur = prev.get(cur);
+    if (cur === undefined) return null;
+    path.push(cur);
+  }
+  path.reverse();
+  return path.map(i => graph.nodes[i]);
+}
+
+// Пытается построить путь по графу лотков между двумя точками. null, если
+// граф отсутствует/точки не снапаются/путь делает неправдоподобный разворот.
+function pathViaTrayGraph(graph, tol, xa, ya, xb, yb) {
+  if (!graph || graph.edges.length === 0) return null;
+  const nodeA = snapPointToGraph(graph, xa, ya, tol);
+  const nodeB = snapPointToGraph(graph, xb, yb, tol);
+  if (nodeA === null || nodeB === null) return null;
+  const path = dijkstraPath(graph, nodeA, nodeB);
+  if (!path) return null;
+  const full = [[xa, ya], ...path, [xb, yb]];
+  if (pathHasSharpBacktrack(full)) return null;
+  return full;
+}
+
+// Строит маршрут для произвольной последовательности кодов узлов — участок
+// за участком, той же логикой, что build_route_path.build_route_for_cable:
+// общий лист+слой обеих точек -> путь по графу лотков, иначе честная прямая
+// линия; если общего листа нет вообще — переход между листами (без пути).
+function buildRouteFromCodes(graphData, codes) {
+  const { labels, graphs, snap_tol } = graphData;
+  const segments = [];
+  for (let i = 0; i + 1 < codes.length; i++) {
+    const codeA = codes[i], codeB = codes[i + 1];
+    const locsA = resolveLocations(labels, codeA);
+    const locsB = resolveLocations(labels, codeB);
+    if (!locsA.length || !locsB.length) {
+      segments.push({ from: codeA, to: codeB, status: 'code_not_found_on_any_sheet' });
+      continue;
+    }
+    const filesA = new Set(locsA.map(l => l.file));
+    const filesB = new Set(locsB.map(l => l.file));
+    const common = [...filesA].filter(f => filesB.has(f));
+    if (!common.length) {
+      segments.push({
+        from: codeA, to: codeB, status: 'sheet_transition',
+        from_sheets: [...filesA].sort(), to_sheets: [...filesB].sort(),
+      });
+      continue;
+    }
+    const file = common.sort()[0];
+    const layersA = new Set(locsA.filter(l => l.file === file).map(l => l.layer));
+    const layersB = new Set(locsB.filter(l => l.file === file).map(l => l.layer));
+    const commonLayers = [...layersA].filter(l => layersB.has(l)).sort();
+    let layerA, layerB;
+    if (commonLayers.length) {
+      layerA = layerB = commonLayers[0];
+    } else {
+      layerA = [...layersA].sort()[0];
+      layerB = [...layersB].sort()[0];
+    }
+    const pa = locsA.find(l => l.file === file && l.layer === layerA);
+    const pb = locsB.find(l => l.file === file && l.layer === layerB);
+
+    const graph = layerA === layerB ? (graphs[file] && graphs[file][layerA]) : null;
+    const tol = (snap_tol && snap_tol[file]) || 20;
+    const trayPath = graph ? pathViaTrayGraph(graph, tol, pa.x, pa.y, pb.x, pb.y) : null;
+    if (trayPath) {
+      segments.push({ from: codeA, to: codeB, file, status: 'ok_tray', points: trayPath });
+    } else {
+      segments.push({
+        from: codeA, to: codeB, file, status: 'ok_straight_fallback',
+        points: [[pa.x, pa.y], [pb.x, pb.y]],
+      });
+    }
+  }
+  return segments;
 }
 
 // Стиль отрисовки трассы: line-halo (полупрозрачная светлая подложка под
@@ -744,7 +929,7 @@ async function renderSheetSelect(buildingName) {
 
   CURRENT_SHEETS = sheets;
   CURRENT_BUILDING = buildingName;
-  CURRENT_ROUTES = await loadRoutesFromFolder(files);
+  CURRENT_GRAPH_DATA = await loadGraphDataFromFolder(files);
 
   // Прогружаем ВСЕ листы здания сразу, пока пользователь видит "Загружаю…" —
   // после этого переключение между листами (select/кнопки маршрута) берёт
@@ -887,36 +1072,39 @@ async function renderRouteStep(fileIndex, direction = 'start') {
   }
 }
 
-// Показывает маршрут кабеля: находит лист, где начинается указанный сегмент
-// (segIdx, по умолчанию 0 — самое начало маршрута), переключает на него
-// select и рисует поверх поставленной схемы линию+точки. Если кабель проходит
-// через несколько листов — рядом появляются кнопки "Продолжить"/"Вернуться"
-// (см. renderRouteStep) для перехода по маршруту без потери подсветки.
-async function showCableRoute(cableId, segIdx = 0) {
+// Показывает маршрут для присланной последовательности кодов узлов: строит
+// путь по графу лотков (buildRouteFromCodes, работает для ЛЮБОЙ трассы, не
+// только заранее известной), переключает на первый нужный лист и рисует
+// поверх схемы линию+точки. Если трасса проходит через несколько листов —
+// рядом появляются кнопки "Продолжить"/"Вернуться" (см. renderRouteStep).
+async function showRouteForCodes(codes) {
   const viewer = document.getElementById("viewer");
-  // Если список листов ещё не отрисован (нет .has-sheet) — можно перезаписать
-  // viewer целиком, иначе (здание уже выбрано) сообщение об ошибке пишем в
-  // frameHolder, чтобы не терять сам выпадающий список.
   const errorTarget = () => document.getElementById('sheet-frame-holder') || viewer;
   if (!CURRENT_BUILDING) {
     viewer.textContent = "Сначала выберите здание";
     return;
   }
-  if (!CURRENT_ROUTES) {
-    errorTarget().textContent = "Для этого здания нет данных о маршрутах кабелей";
-    return;
-  }
-  const route = CURRENT_ROUTES[cableId];
-  if (!route) {
-    errorTarget().textContent = `Кабель "${cableId}" не найден в реестре маршрутов`;
+  if (!CURRENT_GRAPH_DATA) {
+    errorTarget().textContent = "Для этого здания нет данных геометрии лотков (graph_data.json)";
     return;
   }
 
+  const segments = buildRouteFromCodes(CURRENT_GRAPH_DATA, codes);
+  const notFound = segments.filter(s => s.status === 'code_not_found_on_any_sheet');
+  if (notFound.length) {
+    errorTarget().textContent = `Код узла не найден на схемах: ${notFound.map(s => s.status === 'code_not_found_on_any_sheet' ? (s.from) : '').filter(Boolean).join(', ')}`;
+    return;
+  }
+  const withPath = segments.filter(s => s.points);
+  if (!withPath.length) {
+    errorTarget().textContent = "Не удалось построить ни одного участка маршрута (все узлы на разных листах?)";
+    return;
+  }
+
+  const route = { segments: withPath, start_code: codes[0], end_code: codes[codes.length - 1] };
   const files = computeFileSequence(route);
-  const startFile = route.segments[Math.min(segIdx, route.segments.length - 1)].file;
-  const startIndex = Math.max(0, files.indexOf(startFile));
-  ACTIVE_ROUTE = { cableId, route, files, index: startIndex };
-  await renderRouteStep(startIndex);
+  ACTIVE_ROUTE = { route, files, index: 0 };
+  await renderRouteStep(0);
 }
 
 document.getElementById("building-select").addEventListener("change", (e) => {
@@ -946,59 +1134,24 @@ function parseTraceSequence(text) {
   return codes;
 }
 
-// Ищем в реестре маршрутов кабель, чья цепочка узлов (from → to → to → ...)
-// содержит введённую последовательность КАК ФРАГМЕНТ (не обязательно с самого
-// начала маршрута) — пользователь может вставить не весь список трассировки
-// из Excel, а кусок посередине (например, без первой точки). Возвращаем не
-// только id кабеля, но и индекс сегмента, с которого начинается совпадение —
-// чтобы сразу открыть нужный лист, а не первый лист всего маршрута.
-function findRouteMatchByTraceSequence(codes) {
-  if (!CURRENT_ROUTES || codes.length < 2) return null;
-  for (const [id, route] of Object.entries(CURRENT_ROUTES)) {
-    const chain = [route.segments[0].from, ...route.segments.map(s => s.to)];
-    for (let start = 0; start + codes.length <= chain.length; start++) {
-      let ok = true;
-      for (let i = 0; i < codes.length; i++) {
-        if (chain[start + i] !== codes[i]) { ok = false; break; }
-      }
-      if (ok) return { cableId: id, segIdx: Math.min(start, route.segments.length - 1) };
-    }
-  }
-  return null;
-}
-
 document.getElementById("btn-show-route").addEventListener("click", () => {
   const rawInput = document.getElementById("cable-id-input").value.trim();
   const viewer = document.getElementById("viewer");
   if (!rawInput) {
-    viewer.textContent = "Введите маркировку кабеля или трассировку";
+    viewer.textContent = "Введите последовательность узлов трассировки";
     return;
   }
-
-  // Если введённый текст похож на трассировку (несколько узлов через пробел,
-  // а не одиночный KKS-код кабеля) — сначала ищем по последовательности узлов.
-  const looksLikeTrace = /\s/.test(rawInput) || /^[\d.]+[A-Za-zА-Яа-я]+\d+\.\d+V?(\/\S+)?$/.test(rawInput);
-  if (looksLikeTrace) {
-    if (!CURRENT_BUILDING) {
-      viewer.textContent = "Сначала выберите здание";
-      return;
-    }
-    const errorTarget = () => document.getElementById('sheet-frame-holder') || viewer;
-    const codes = parseTraceSequence(rawInput);
-    if (codes.length < 2) {
-      errorTarget().textContent = "Не удалось распознать последовательность узлов трассировки";
-      return;
-    }
-    const match = findRouteMatchByTraceSequence(codes);
-    if (!match) {
-      errorTarget().textContent = "Трасса с такой последовательностью узлов не найдена в реестре маршрутов";
-      return;
-    }
-    showCableRoute(match.cableId, match.segIdx);
+  if (!CURRENT_BUILDING) {
+    viewer.textContent = "Сначала выберите здание";
     return;
   }
-
-  showCableRoute(rawInput);
+  const errorTarget = () => document.getElementById('sheet-frame-holder') || viewer;
+  const codes = parseTraceSequence(rawInput);
+  if (codes.length < 2) {
+    errorTarget().textContent = "Не удалось распознать последовательность узлов трассировки (нужно минимум 2 кода вида 00.00UKS10.104/0)";
+    return;
+  }
+  showRouteForCodes(codes);
 });
 
 // Очистить блок 2: сбрасываем поле ввода и убираем подсветку трассы с
@@ -1054,7 +1207,7 @@ btnFullscreen.addEventListener('click', () => {
 // Паттерн скопирован с оригинального сайта (konstruktor/index.html):
 // фоновая проверка версии на сервере, баннер показывается ТОЛЬКО если там
 // реально более новая версия — не постоянная надпись "обновите вкладку".
-const CURRENT_VERSION = 'v0.4';
+const CURRENT_VERSION = 'v0.5';
 
 function _parseVer(s) {
   const m = s && s.match(/v(\d+)\.(\d+)/);
